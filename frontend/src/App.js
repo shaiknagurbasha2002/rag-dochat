@@ -1,7 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
-
 const API = "https://rag-dochat-backend.onrender.com";
 
 export default function App() {
