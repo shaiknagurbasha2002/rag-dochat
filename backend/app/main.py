@@ -23,7 +23,12 @@ app = FastAPI(
 # Without this, the browser will block all requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # We'll restrict this after deployment
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://rag-dochat.vercel.app",
+        "https://*.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
