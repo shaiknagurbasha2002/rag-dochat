@@ -23,7 +23,7 @@ app = FastAPI(
 # Without this, the browser will block all requests
 app.add_middleware(
     CORSMiddleware,
-   allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["*"],  # We'll restrict this after deployment
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
