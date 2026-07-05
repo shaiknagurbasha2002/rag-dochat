@@ -4,16 +4,29 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.query import query_rag
 
-# Ask a question about your PDF
-# Change this to something relevant to your test.pdf content!
-question = "What is this document about?"
+# List of multiple questions to test the pipeline thoroughly
+questions = [
+    "What is this document about?",
+    "What documents are required for the application?",
+    "Are there any special requirements for students?",
+    "What is the process for submitting the application?",
+    "What happens after the application is submitted?"
+]
 
-print(f"Question: {question}")
-print("-" * 50)
+print("=" * 60)
+print("RAG PIPELINE — END TO END TEST")
+print("=" * 60)
 
-result = query_rag(question)
+for i, question in enumerate(questions, 1):
+    print(f"\n🔹 Question {i}: {question}")
+    print("-" * 50)
 
-print(f"\n📄 Answer:\n{result['answer']}")
-print(f"\n📎 Sources:")
-for source in result['sources']:
-    print(f"   • {source}")
+    result = query_rag(question)
+
+    print(f"📄 Answer:\n{result['answer']}")
+    print(f"\n📎 Sources:")
+    for source in result['sources']:
+        print(f"   • {source}")
+    print("=" * 60)
+
+print("\n✅ All tests complete!")
