@@ -1,43 +1,44 @@
 import os
 import shutil
 import tempfile
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import List
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
+from app.database import get_db, User
+from app.auth import (
+    get_current_user, create_access_token,
+    register_user, verify_password
+)
 from app.ingest import ingest_pdf
 from app.query import query_rag
 
 load_dotenv()
 
-# Create the FastAPI app
-app = FastAPI(
-    title="RAG DocChat API",
-    description="Upload PDFs and ask questions about them",
-    version="1.0.0"
-)
+app = FastAPI(title="RAG DocChat API", version="2.0.0")
 
-# CORS — allows React frontend to talk to this API
-# Without this, the browser will block all requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "https://rag-dochat.vercel.app",
-        "https://*.vercel.app"
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Track uploaded documents in memory
-uploaded_docs = []
+# ── Request/Response Models ─────────────────────────────
 
-# ─── Request/Response Models ───────────────────────────────
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    email: str
 
 class QueryRequest(BaseModel):
     question: str
@@ -50,86 +51,74 @@ class DocumentInfo(BaseModel):
     file_name: str
     chunks: int
 
-# ─── Routes ────────────────────────────────────────────────
+# ── Auth Routes ─────────────────────────────────────────
 
 @app.get("/")
 def root():
-    """Health check — visit this to confirm API is running"""
-    return {"status": "running", "message": "RAG DocChat API is live!"}
+    return {"status": "running", "message": "RAG DocChat API v2.0 is live!"}
 
+@app.post("/auth/register", response_model=TokenResponse)
+def register(request: RegisterRequest, db: Session = Depends(get_db)):
+    user = register_user(request.email, request.password, db)
+    token = create_access_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        email=user.email
+    )
+
+@app.post("/auth/login", response_model=TokenResponse)
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user.id)
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        email=user.email
+    )
+
+# ── Protected Routes ────────────────────────────────────
 
 @app.post("/ingest", response_model=DocumentInfo)
-async def ingest_document(file: UploadFile = File(...)):
-    """
-    Upload a PDF file.
-    Chunks it, embeds it, and stores in ChromaDB.
-    """
-    # Only accept PDF files
+async def ingest_document(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are supported"
-        )
+        raise HTTPException(status_code=400, detail="Only PDF files supported")
 
-    # Save uploaded file to a temp location on disk
-    # We need a real file path for PyPDFLoader
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
 
     try:
-        # Run the ingestion pipeline
-        chunks = ingest_pdf(tmp_path, file.filename)
-
-        # Track the document
-        uploaded_docs.append({
-            "file_name": file.filename,
-            "chunks": chunks
-        })
-
+        # Pass user_id for per-user storage
+        chunks = ingest_pdf(tmp_path, file.filename, current_user.id)
         return DocumentInfo(file_name=file.filename, chunks=chunks)
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
     finally:
-        # Always clean up the temp file
         os.unlink(tmp_path)
 
-
 @app.post("/query", response_model=QueryResponse)
-async def query_document(request: QueryRequest):
-    """
-    Ask a question.
-    Searches ChromaDB and returns an LLM answer with citations.
-    """
+async def query_document(
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user)
+):
     if not request.question.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Question cannot be empty"
-        )
-
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
     try:
-        result = query_rag(request.question)
-        return QueryResponse(
-            answer=result["answer"],
-            sources=result["sources"]
-        )
+        # Pass user_id to search only their documents
+        result = query_rag(request.question, current_user.id)
+        return QueryResponse(answer=result["answer"], sources=result["sources"])
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.get("/documents", response_model=List[DocumentInfo])
-async def get_documents():
-    """Returns list of all uploaded documents"""
-    return uploaded_docs
-
-
-@app.delete("/documents")
-async def clear_documents():
-    """Clears all documents from ChromaDB"""
-    import shutil
-    if os.path.exists("chroma_db"):
-        shutil.rmtree("chroma_db")
-    uploaded_docs.clear()
-    return {"message": "All documents cleared"}
+@app.get("/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {"email": current_user.email, "id": current_user.id}
