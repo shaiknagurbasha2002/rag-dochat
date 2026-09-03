@@ -6,7 +6,7 @@
 
 ---
 
-## 🎯 STAR Method — Project Story
+## 🎯My Project Story
 
 ### 📌 Situation
 Large language models like GPT are powerful but have two critical limitations:
